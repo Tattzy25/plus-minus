@@ -106,13 +106,14 @@ app.delete('/mcp', async (req: Request, res: Response) => {
 });
 
 // Start the server
-const PORT = process.env.MCP_SERVER_PORT || 4000;
+const PORT = process.env.MCP_SERVER_PORT || 8080;
 app.listen(PORT, () => {
   console.log(`MCP Stateless Streamable HTTP Server listening on port ${PORT}`);
 });
 
 // Base URL for the API, can be overridden by the environment variable MCP_API_URL
-const API_URL = process.env.MCP_API_URL || "https://api.example.com";
+const API_URL =
+  process.env.MCP_API_URL || "https://plus-minus-production.up.railway.app";
 
 // Helper function for making API requests
 async function makeAPIRequest<T>(url: string, method: string, body?: any): Promise<T | null> {
