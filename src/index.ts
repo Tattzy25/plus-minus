@@ -1,4 +1,5 @@
 import express from "express";
+import { validatePlus, validateMinus, isBalanceEligible, resolveTimestamp } from "./rules.js";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { z } from "zod";
@@ -12,7 +13,7 @@ const app = express();
 app.use(express.json());
 
 const server = new McpServer({
-  name: "Echo",
+  name: "plus-minus",
   version: "1.0.0"
 });
 
@@ -69,7 +70,7 @@ app.listen(PORT, () => {
 
 // Base URL for the API, can be overridden by the environment variable MCP_API_URL
 const API_URL =
-  process.env.MCP_API_URL || "https://plus-minus-production.up.railway.app";
+  process.env.MCP_API_URL || "https://plus-minus.onrender.com";
 
 // Helper function for making API requests
 async function makeAPIRequest<T>(url: string, method: string, body?: any): Promise<T | null> {
@@ -106,7 +107,7 @@ interface CreditOperation {
   currentBalance: number;
 }
 
-type OperationType = "PLUS" | "MINUS" | "GET_LOGS" | "HEALTH_CHECK";
+type OperationType = "PLUS" | "MINUS" | "HEALTH_CHECK";
 
 // Interface for logging interactions
 interface LogInteraction {
@@ -122,26 +123,11 @@ interface LogInteraction {
   message?: string;
 }
 
-// Interface for log entries
-interface LogEntry {
-  operation: OperationType;
-  customerId?: string;
-  userId?: string;
-  email?: string;
-  sourceId?: string;
-  timestamp?: string;
-  creditAmount?: number;
-  previousNumber?: number;
-  newBalance?: number;
-  message?: string;
-}
 
 async function logOperation(data: LogInteraction): Promise<void> {
   await makeAPIRequest(`${API_URL}/LOGS`, "POST", data);
 }
 
-// Interface for logs response
-type LogsResponse = LogEntry[];
 
 // Register tools for the MCP server
 
@@ -160,17 +146,12 @@ server.tool(
     monthlyGrant: z.boolean().default(false).describe("Whether this is a monthly grant"),
   },
   async ({ customerId, userId, creditAmount, purchaseOrderId, email, sourceId, refundGrant, monthlyGrant }) => {
-    const missing = [];
-    if (!customerId) missing.push("customerId");
-    if (!userId) missing.push("userId");
-    if (!creditAmount) missing.push("creditAmount");
-    if (!purchaseOrderId) missing.push("purchaseOrderId");
-    if (!email) missing.push("email");
+    const missing = validatePlus({ customerId, userId, creditAmount, purchaseOrderId, email });
     if (missing.length > 0) {
       return { content: [{ type: "text", text: `Missing required fields: ${missing.join(", ")}` }] };
     }
 
-    const timestamp = new Date().toISOString();
+    const timestamp = resolveTimestamp();
     const result = await makeAPIRequest<{ success: boolean }>(`${API_URL}/PLUS`, "POST", { customerId, userId, creditAmount, purchaseOrderId, email, sourceId, timestamp, refundGrant, monthlyGrant });
 
     await logOperation({ operation: "PLUS", customerId, userId, email, sourceId, timestamp, creditAmount, message: `Added ${creditAmount} credits. Order: ${purchaseOrderId}` });
@@ -196,10 +177,20 @@ server.tool(
     currentBalance: z.number().describe("The current credit balance after the operation"),
   },
   async ({ customerId, userId, creditAmount, email, sourceId, timestamp, previousNumber, currentBalance }) => {
-    const url = `${API_URL}/MINUS`;
-    const result = await makeAPIRequest<{ success: boolean }>(url, "POST", { customerId, userId, creditAmount, email, sourceId, timestamp, previousNumber, currentBalance });
+    const missing = validateMinus({ customerId, userId, creditAmount, email, sourceId, timestamp });
+    if (missing.length > 0) {
+      return { content: [{ type: "text", text: `Missing required fields: ${missing.join(", ")}` }] };
+    }
 
-    await logOperation({ operation: "MINUS", customerId, userId, email, sourceId, timestamp, creditAmount, previousNumber, newBalance: currentBalance, message: `Deducted ${creditAmount} credits.` });
+    if (!isBalanceEligible(currentBalance)) {
+      return { content: [{ type: "text", text: "Insufficient credits." }] };
+    }
+
+    const ts = resolveTimestamp(timestamp);
+    const url = `${API_URL}/MINUS`;
+    const result = await makeAPIRequest<{ success: boolean }>(url, "POST", { customerId, userId, creditAmount, email, sourceId, timestamp: ts, previousNumber, currentBalance });
+
+    await logOperation({ operation: "MINUS", customerId, userId, email, sourceId, timestamp: ts, creditAmount, previousNumber, newBalance: currentBalance, message: `Deducted ${creditAmount} credits.` });
 
     return {
       content: [{ type: "text", text: result?.success ? "Credits deducted successfully." : "Failed to deduct credits." }],
@@ -225,7 +216,7 @@ server.tool(
   },
   async ({ operation, customerId, userId, email, sourceId, timestamp, creditAmount, previousNumber, newBalance, message }: LogInteraction) => {
     const url = `${API_URL}/LOGS`;
-    const result = await makeAPIRequest<{ success: boolean }>(url, "POST", { operation, customerId, userId, email, sourceId, timestamp, creditAmount, previousNumber, newBalance, message });
+    await makeAPIRequest<{ success: boolean }>(url, "POST", { operation, customerId, userId, email, sourceId, timestamp, creditAmount, previousNumber, newBalance, message });
 
     return {
       content: [{ type: "text", text: "Interaction logged." }],
@@ -233,24 +224,6 @@ server.tool(
   },
 );
 
-// @ts-ignore
-server.tool(
-  "get-logs",
-  "Retrieve log entries for PLUS and MINUS operations",
-  {
-    userId: z.string().describe("The ID of the user to retrieve logs for"),
-  },
-  async ({ userId }: { userId: string }) => {
-    const url = `${API_URL}/LOGS?userId=${userId}`;
-    const logsData = await makeAPIRequest<LogsResponse>(url, "GET");
-
-    await logOperation({ operation: "GET_LOGS", userId, timestamp: new Date().toISOString(), message: `Retrieved logs for user ${userId}` });
-
-    return {
-      content: [{ type: "text", text: JSON.stringify(logsData) }],
-    };
-  },
-);
 
 // @ts-ignore
 server.tool(
@@ -261,7 +234,7 @@ server.tool(
     const url = `${API_URL}/HEALTH`;
     const result = await makeAPIRequest<{ status: string }>(url, "GET");
 
-    await logOperation({ operation: "HEALTH_CHECK", timestamp: new Date().toISOString(), message: `Health check: ${result?.status}` });
+    await logOperation({ operation: "HEALTH_CHECK", timestamp: resolveTimestamp(), message: `Health check: ${result?.status}` });
 
     return {
       content: [{ type: "text", text: `Health check status: ${result?.status}` }],
