@@ -1,5 +1,5 @@
 import express from "express";
-import { McpServer, ResourceTemplate } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { z } from "zod";
 // Import Express types correctly
@@ -16,39 +16,6 @@ const server = new McpServer({
   version: "1.0.0"
 });
 
-// Register our capabilities
-server.resource(
-  "echo",
-  new ResourceTemplate("echo://{message}", { list: undefined }),
-  async (uri, { message }) => ({
-    contents: [{
-      uri: uri.href,
-      text: `Resource echo: ${message}`
-    }]
-  })
-);
-
-server.tool(
-  "echo",
-  { message: z.string() },
-  async ({ message }) => ({
-    content: [{ type: "text", text: `Tool echo: ${message}` }]
-  })
-);
-
-server.prompt(
-  "echo",
-  { message: z.string() },
-  ({ message }) => ({
-    messages: [{
-      role: "user",
-      content: {
-        type: "text",
-        text: `Please process this message: ${message}`
-      }
-    }]
-  })
-);
 
 app.post('/mcp', async (req: Request, res: Response) => {
   try {
@@ -93,17 +60,6 @@ app.get('/mcp', async (req: Request, res: Response) => {
   }));
 });
 
-app.delete('/mcp', async (req: Request, res: Response) => {
-  console.log('Received DELETE MCP request');
-  res.writeHead(405).end(JSON.stringify({
-    jsonrpc: "2.0",
-    error: {
-      code: -32000,
-      message: "Method not allowed. Use POST to interact with the MCP server. Follow README for details."
-    },
-    id: null
-  }));
-});
 
 // Start the server
 const PORT = process.env.MCP_SERVER_PORT || 8080;
@@ -139,30 +95,53 @@ async function makeAPIRequest<T>(url: string, method: string, body?: any): Promi
 
 // Interface for adding or deducting credits
 interface CreditOperation {
+  customerId: string;
   userId: string;
-  amount: number;
+  creditAmount: number;
+  purchaseOrderId: string;
+  email: string;
+  sourceId: string;
+  timestamp: string;
+  previousNumber: number;
+  currentBalance: number;
 }
+
+type OperationType = "PLUS" | "MINUS" | "GET_LOGS" | "HEALTH_CHECK";
 
 // Interface for logging interactions
 interface LogInteraction {
-  userId: string;
-  operation: "PLUS" | "MINUS";
-  amount: number;
-  timestamp: string;
+  operation: OperationType;
+  customerId?: string;
+  userId?: string;
+  email?: string;
+  sourceId?: string;
+  timestamp?: string;
+  creditAmount?: number;
+  previousNumber?: number;
+  newBalance?: number;
+  message?: string;
 }
 
 // Interface for log entries
 interface LogEntry {
-  userId: string;
-  operation: "PLUS" | "MINUS";
-  amount: number;
-  timestamp: string;
+  operation: OperationType;
+  customerId?: string;
+  userId?: string;
+  email?: string;
+  sourceId?: string;
+  timestamp?: string;
+  creditAmount?: number;
+  previousNumber?: number;
+  newBalance?: number;
+  message?: string;
+}
+
+async function logOperation(data: LogInteraction): Promise<void> {
+  await makeAPIRequest(`${API_URL}/LOGS`, "POST", data);
 }
 
 // Interface for logs response
-interface LogsResponse {
-  logs: LogEntry[];
-}
+type LogsResponse = LogEntry[];
 
 // Register tools for the MCP server
 
@@ -171,31 +150,33 @@ server.tool(
   "plus-credits",
   "Add credits to a user account",
   {
-    userId: z.string().describe("The ID of the user to add credits to"),
-    amount: z.number().describe("The amount of credits to add"),
+    customerId: z.string().describe("The customer ID"),
+    userId: z.string().describe("The user ID"),
+    creditAmount: z.number().describe("The amount of credits to add"),
+    purchaseOrderId: z.string().describe("The purchase order ID"),
+    email: z.string().describe("The user's email address"),
+    sourceId: z.string().optional().describe("The source ID"),
+    refundGrant: z.boolean().default(false).describe("Whether this is a refund grant"),
+    monthlyGrant: z.boolean().default(false).describe("Whether this is a monthly grant"),
   },
-  async ({ userId, amount }: CreditOperation) => {
-    const url = `${API_URL}/PLUS`;
-    const result = await makeAPIRequest<{ success: boolean }>(url, "POST", { userId, amount });
-
-    if (!result) {
-      return {
-        content: [
-          {
-            type: "text",
-            text: "Failed to add credits.",
-          },
-        ],
-      };
+  async ({ customerId, userId, creditAmount, purchaseOrderId, email, sourceId, refundGrant, monthlyGrant }) => {
+    const missing = [];
+    if (!customerId) missing.push("customerId");
+    if (!userId) missing.push("userId");
+    if (!creditAmount) missing.push("creditAmount");
+    if (!purchaseOrderId) missing.push("purchaseOrderId");
+    if (!email) missing.push("email");
+    if (missing.length > 0) {
+      return { content: [{ type: "text", text: `Missing required fields: ${missing.join(", ")}` }] };
     }
 
+    const timestamp = new Date().toISOString();
+    const result = await makeAPIRequest<{ success: boolean }>(`${API_URL}/PLUS`, "POST", { customerId, userId, creditAmount, purchaseOrderId, email, sourceId, timestamp, refundGrant, monthlyGrant });
+
+    await logOperation({ operation: "PLUS", customerId, userId, email, sourceId, timestamp, creditAmount, message: `Added ${creditAmount} credits. Order: ${purchaseOrderId}` });
+
     return {
-      content: [
-        {
-          type: "text",
-          text: result.success ? "Credits added successfully." : "Failed to add credits.",
-        },
-      ],
+      content: [{ type: "text", text: result?.success ? "Credits added successfully." : "Failed to add credits." }],
     };
   },
 );
@@ -205,31 +186,23 @@ server.tool(
   "minus-credits",
   "Deduct credits from a user account",
   {
-    userId: z.string().describe("The ID of the user to deduct credits from"),
-    amount: z.number().describe("The amount of credits to deduct"),
+    customerId: z.string().describe("The customer ID"),
+    userId: z.string().describe("The user ID"),
+    creditAmount: z.number().describe("The amount of credits to deduct"),
+    email: z.string().describe("The user's email address"),
+    sourceId: z.string().describe("The source ID"),
+    timestamp: z.string().describe("The timestamp of the operation"),
+    previousNumber: z.number().describe("The previous credit balance"),
+    currentBalance: z.number().describe("The current credit balance after the operation"),
   },
-  async ({ userId, amount }: CreditOperation) => {
+  async ({ customerId, userId, creditAmount, email, sourceId, timestamp, previousNumber, currentBalance }) => {
     const url = `${API_URL}/MINUS`;
-    const result = await makeAPIRequest<{ success: boolean }>(url, "POST", { userId, amount });
+    const result = await makeAPIRequest<{ success: boolean }>(url, "POST", { customerId, userId, creditAmount, email, sourceId, timestamp, previousNumber, currentBalance });
 
-    if (!result) {
-      return {
-        content: [
-          {
-            type: "text",
-            text: "Failed to deduct credits.",
-          },
-        ],
-      };
-    }
+    await logOperation({ operation: "MINUS", customerId, userId, email, sourceId, timestamp, creditAmount, previousNumber, newBalance: currentBalance, message: `Deducted ${creditAmount} credits.` });
 
     return {
-      content: [
-        {
-          type: "text",
-          text: result.success ? "Credits deducted successfully." : "Failed to deduct credits.",
-        },
-      ],
+      content: [{ type: "text", text: result?.success ? "Credits deducted successfully." : "Failed to deduct credits." }],
     };
   },
 );
@@ -239,32 +212,23 @@ server.tool(
   "log-interaction",
   "Log an interaction for PLUS or MINUS operations",
   {
-    userId: z.string().describe("The ID of the user"),
     operation: z.enum(["PLUS", "MINUS"]).describe("The operation performed"),
-    amount: z.number().describe("The amount of credits involved"),
+    customerId: z.string().describe("The customer ID"),
+    userId: z.string().describe("The user ID"),
+    email: z.string().describe("The user's email address"),
+    sourceId: z.string().describe("The source ID"),
+    timestamp: z.string().describe("The timestamp of the operation"),
+    creditAmount: z.number().describe("The amount of credits involved"),
+    previousNumber: z.number().describe("The previous credit balance"),
+    newBalance: z.number().describe("The new credit balance after the operation"),
+    message: z.string().describe("A message describing the operation"),
   },
-  async ({ userId, operation, amount }: LogInteraction) => {
+  async ({ operation, customerId, userId, email, sourceId, timestamp, creditAmount, previousNumber, newBalance, message }: LogInteraction) => {
     const url = `${API_URL}/LOGS`;
-    const result = await makeAPIRequest<{ success: boolean }>(url, "POST", { userId, operation, amount, timestamp: new Date().toISOString() });
-
-    if (!result) {
-      return {
-        content: [
-          {
-            type: "text",
-            text: "Failed to log interaction.",
-          },
-        ],
-      };
-    }
+    const result = await makeAPIRequest<{ success: boolean }>(url, "POST", { operation, customerId, userId, email, sourceId, timestamp, creditAmount, previousNumber, newBalance, message });
 
     return {
-      content: [
-        {
-          type: "text",
-          text: result.success ? "Interaction logged successfully." : "Failed to log interaction.",
-        },
-      ],
+      content: [{ type: "text", text: "Interaction logged." }],
     };
   },
 );
@@ -280,37 +244,10 @@ server.tool(
     const url = `${API_URL}/LOGS?userId=${userId}`;
     const logsData = await makeAPIRequest<LogsResponse>(url, "GET");
 
-    if (!logsData) {
-      return {
-        content: [
-          {
-            type: "text",
-            text: "Failed to retrieve logs.",
-          },
-        ],
-      };
-    }
+    await logOperation({ operation: "GET_LOGS", userId, timestamp: new Date().toISOString(), message: `Retrieved logs for user ${userId}` });
 
-    const logs = logsData.logs || [];
-    if (logs.length === 0) {
-      return {
-        content: [
-          {
-            type: "text",
-            text: `No logs found for user ${userId}.`,
-          },
-        ],
-      };
-    }
-
-    const logsText = logs.map(log => `Operation: ${log.operation}, Amount: ${log.amount}, Timestamp: ${log.timestamp}`).join("\n");
     return {
-      content: [
-        {
-          type: "text",
-          text: `Logs for user ${userId}:\n\n${logsText}`,
-        },
-      ],
+      content: [{ type: "text", text: JSON.stringify(logsData) }],
     };
   },
 );
@@ -324,24 +261,10 @@ server.tool(
     const url = `${API_URL}/HEALTH`;
     const result = await makeAPIRequest<{ status: string }>(url, "GET");
 
-    if (!result) {
-      return {
-        content: [
-          {
-            type: "text",
-            text: "Health check failed.",
-          },
-        ],
-      };
-    }
+    await logOperation({ operation: "HEALTH_CHECK", timestamp: new Date().toISOString(), message: `Health check: ${result?.status}` });
 
     return {
-      content: [
-        {
-          type: "text",
-          text: `Health check status: ${result.status}`,
-        },
-      ],
+      content: [{ type: "text", text: `Health check status: ${result?.status}` }],
     };
   },
 );
