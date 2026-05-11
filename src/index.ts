@@ -139,14 +139,14 @@ server.tool(
     customerId: z.string().describe("The customer ID"),
     userId: z.string().describe("The user ID"),
     creditAmount: z.number().describe("The amount of credits to add"),
-    purchaseOrderId: z.string().describe("The purchase order ID"),
+    purchaseOrderId: z.string().optional().describe("The purchase order ID"),
     email: z.string().describe("The user's email address"),
     sourceId: z.string().optional().describe("The source ID"),
     refundGrant: z.boolean().default(false).describe("Whether this is a refund grant"),
     monthlyGrant: z.boolean().default(false).describe("Whether this is a monthly grant"),
   },
   async ({ customerId, userId, creditAmount, purchaseOrderId, email, sourceId, refundGrant, monthlyGrant }) => {
-    const missing = validatePlus({ customerId, userId, creditAmount, purchaseOrderId, email });
+    const missing = validatePlus({ customerId, userId, creditAmount, purchaseOrderId, email, sourceId });
     if (missing.length > 0) {
       return { content: [{ type: "text", text: `Missing required fields: ${missing.join(", ")}` }] };
     }

@@ -2,12 +2,18 @@
 // PLUS-CREDITS RULES
 // ─────────────────────────────────────────────
 
-export const PLUS_REQUIRED_FIELDS = ["customerId", "userId", "creditAmount", "purchaseOrderId", "email"];
+export const PLUS_REQUIRED_FIELDS = ["customerId", "userId", "creditAmount", "email", "sourceId"];
+export const PLUS_PURCHASE_REQUIRED_FIELDS = ["purchaseOrderId"];
 
 export function validatePlus(args: Record<string, any>): string[] {
   const missing: string[] = [];
   for (const field of PLUS_REQUIRED_FIELDS) {
     if (!args[field]) missing.push(field);
+  }
+  if (args.sourceId !== "new-user-signup") {
+    for (const field of PLUS_PURCHASE_REQUIRED_FIELDS) {
+      if (!args[field]) missing.push(field);
+    }
   }
   return missing;
 }
