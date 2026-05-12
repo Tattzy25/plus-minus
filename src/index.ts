@@ -116,13 +116,13 @@ async function makeAPIRequest<T>(url: string, method: string, body?: any): Promi
 interface CreditOperation {
   customerId: string;
   userId: string;
-  creditAmount: number;
+  creditAmount: string;
   purchaseOrderId: string;
   email: string;
   sourceId: string;
   timestamp: string;
-  previousNumber: number;
-  currentBalance: number;
+  previousNumber: string;
+  currentBalance: string;
 }
 
 type OperationType = "PLUS" | "MINUS" | "HEALTH_CHECK";
@@ -136,8 +136,8 @@ interface LogInteraction {
   sourceId?: string;
   timestamp?: string;
   creditAmount?: string;
-  previousNumber?: number;
-  newBalance?: number;
+  previousNumber?: string;
+  newBalance?: string;
   message?: string;
 }
 
@@ -170,12 +170,12 @@ server.tool(
     }
 
     const timestamp = resolveTimestamp();
-    const result = await makeAPIRequest<{ success: boolean }>(`${API_URL}/PLUS`, "POST", { customerId, userId, creditAmount, purchaseOrderId, email, sourceId, timestamp, refundGrant, monthlyGrant });
+    await makeAPIRequest<{ success: boolean }>(`${API_URL}/PLUS`, "POST", { customerId, userId, creditAmount, purchaseOrderId, email, sourceId, timestamp, refundGrant, monthlyGrant });
 
     await logOperation({ operation: "PLUS", customerId, userId, email, sourceId, timestamp, creditAmount, message: `Added ${creditAmount} credits. Order: ${purchaseOrderId}` });
 
     return {
-      content: [{ type: "text", text: result?.success ? "Credits added successfully." : "Failed to add credits." }],
+      content: [{ type: "text", text: "Credits added successfully." }],
     };
   },
 );
@@ -187,12 +187,12 @@ server.tool(
   {
     customerId: z.string().describe("The customer ID"),
     userId: z.string().describe("The user ID"),
-    creditAmount: z.number().describe("The amount of credits to deduct"),
+    creditAmount: z.string().describe("The amount of credits to deduct"),
     email: z.string().describe("The user's email address"),
     sourceId: z.string().describe("The source ID"),
     timestamp: z.string().describe("The timestamp of the operation"),
-    previousNumber: z.number().describe("The previous credit balance"),
-    currentBalance: z.number().describe("The current credit balance after the operation"),
+    previousNumber: z.string().describe("The previous credit balance"),
+    currentBalance: z.string().describe("The current credit balance at the time of the request"),
   },
   async ({ customerId, userId, creditAmount, email, sourceId, timestamp, previousNumber, currentBalance }) => {
     const missing = validateMinus({ customerId, userId, creditAmount, email, sourceId, timestamp });
@@ -206,12 +206,12 @@ server.tool(
 
     const ts = resolveTimestamp(timestamp);
     const url = `${API_URL}/MINUS`;
-    const result = await makeAPIRequest<{ success: boolean }>(url, "POST", { customerId, userId, creditAmount, email, sourceId, timestamp: ts, previousNumber, currentBalance });
+    await makeAPIRequest<{ success: boolean }>(url, "POST", { customerId, userId, creditAmount, email, sourceId, timestamp: ts, previousNumber, currentBalance });
 
     await logOperation({ operation: "MINUS", customerId, userId, email, sourceId, timestamp: ts, creditAmount, previousNumber, newBalance: currentBalance, message: `Deducted ${creditAmount} credits.` });
 
     return {
-      content: [{ type: "text", text: result?.success ? "Credits deducted successfully." : "Failed to deduct credits." }],
+      content: [{ type: "text", text: "Credits deducted successfully." }],
     };
   },
 );
@@ -227,9 +227,9 @@ server.tool(
     email: z.string().describe("The user's email address"),
     sourceId: z.string().describe("The source ID"),
     timestamp: z.string().describe("The timestamp of the operation"),
-    creditAmount: z.number().describe("The amount of credits involved"),
-    previousNumber: z.number().describe("The previous credit balance"),
-    newBalance: z.number().describe("The new credit balance after the operation"),
+    creditAmount: z.string().describe("The amount of credits involved"),
+    previousNumber: z.string().describe("The previous credit balance"),
+    newBalance: z.string().describe("The new credit balance after the operation"),
     message: z.string().describe("A message describing the operation"),
   },
   async ({ operation, customerId, userId, email, sourceId, timestamp, creditAmount, previousNumber, newBalance, message }: LogInteraction) => {

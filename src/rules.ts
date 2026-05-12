@@ -35,8 +35,8 @@ export function validateMinus(args: Record<string, any>): string[] {
 }
 
 // If current balance is already negative → reject
-export function isBalanceEligible(currentBalance: number): boolean {
-  return currentBalance >= 0;
+export function isBalanceEligible(currentBalance: string): boolean {
+  return parseFloat(currentBalance) >= 0;
 }
 
 // Generate timestamp if not provided
