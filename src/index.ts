@@ -62,6 +62,25 @@ app.get('/mcp', async (req: Request, res: Response) => {
 });
 
 
+app.post('/PLUS', (req: Request, res: Response) => {
+  console.log('PLUS received:', req.body);
+  res.json({ success: true });
+});
+
+app.post('/MINUS', (req: Request, res: Response) => {
+  console.log('MINUS received:', req.body);
+  res.json({ success: true });
+});
+
+app.post('/LOGS', (req: Request, res: Response) => {
+  console.log('LOG received:', req.body);
+  res.json({ success: true });
+});
+
+app.get('/HEALTH', (req: Request, res: Response) => {
+  res.json({ status: 'ok' });
+});
+
 // Start the server
 const PORT = process.env.MCP_SERVER_PORT || 8080;
 app.listen(PORT, () => {
@@ -69,8 +88,7 @@ app.listen(PORT, () => {
 });
 
 // Base URL for the API, can be overridden by the environment variable MCP_API_URL
-const API_URL =
-  process.env.MCP_API_URL || "https://plus-minus.onrender.com";
+const API_URL = process.env.MCP_API_URL || "https://plus-minus.onrender.com";
 
 // Helper function for making API requests
 async function makeAPIRequest<T>(url: string, method: string, body?: any): Promise<T | null> {
