@@ -135,7 +135,7 @@ interface LogInteraction {
   email?: string;
   sourceId?: string;
   timestamp?: string;
-  creditAmount?: number;
+  creditAmount?: string;
   previousNumber?: number;
   newBalance?: number;
   message?: string;
@@ -156,7 +156,7 @@ server.tool(
   {
     customerId: z.string().describe("The customer ID"),
     userId: z.string().describe("The user ID"),
-    creditAmount: z.number().describe("The amount of credits to add"),
+    creditAmount: z.string().describe("The amount of credits to add"),
     purchaseOrderId: z.string().optional().describe("The purchase order ID"),
     email: z.string().describe("The user's email address"),
     sourceId: z.string().optional().describe("The source ID"),
